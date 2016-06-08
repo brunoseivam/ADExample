@@ -2,10 +2,9 @@ TOP = ..
 include $(TOP)/configure/CONFIG
 
 DIRS += simDetectorNoIOC
-ifneq ($(EPICS_LIBCOM_ONLY),YES)
-  DIRS += ADCSimDetectorIOC
-  DIRS += simDetectorIOC
-endif
+#ifneq ($(EPICS_LIBCOM_ONLY),YES)
+#  DIRS += simDetectorIOC
+#endif
 
 include $(TOP)/configure/RULES_TOP
 

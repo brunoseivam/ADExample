@@ -1,57 +1,54 @@
 #include <epicsEvent.h>
-#include "ADDriver.h"
+#include <ADDriver.h>
+#include <NDArray.h>
 
 /** Simulation detector driver; demonstrates most of the features that areaDetector drivers can support. */
 class epicsShareClass simDetector : public ADDriver {
 public:
-    simDetector(const char *portName, int maxSizeX, int maxSizeY, NDDataType_t dataType,
-                int maxBuffers, size_t maxMemory,
-                int priority, int stackSize);
+    simDetector(std::string const & prefix, int maxSizeX, int maxSizeY,
+                epics::pvData::ScalarType dataType, int maxBuffers, size_t maxMemory);
 
     /* These are the methods that we override from ADDriver */
-    virtual asynStatus writeInt32(asynUser *pasynUser, epicsInt32 value);
-    virtual asynStatus writeFloat64(asynUser *pasynUser, epicsFloat64 value);
+    void process (epics::pvDatabase::PVRecord const * record);
     virtual void setShutter(int open);
     virtual void report(FILE *fp, int details);
+
     void simTask(); /**< Should be private, but gets called from C, so must be public */
 
 protected:
-    int SimGainX;
-    #define FIRST_SIM_DETECTOR_PARAM SimGainX
-    int SimGainY;
-    int SimGainRed;
-    int SimGainGreen;
-    int SimGainBlue;
-    int SimNoise;
-    int SimResetImage;
-    int SimMode;
-    int SimPeakStartX;
-    int SimPeakStartY;
-    int SimPeakWidthX;
-    int SimPeakWidthY;
-    int SimPeakNumX;
-    int SimPeakNumY;
-    int SimPeakStepX;
-    int SimPeakStepY;
-    int SimPeakHeightVariation;
-    int SimSineOffset;
-    int SimSineNoise;
-    int SimXSineOperation;
-    int SimXSine1Amplitude;
-    int SimXSine1Frequency;
-    int SimXSine1Phase;
-    int SimXSine2Amplitude;
-    int SimXSine2Frequency;
-    int SimXSine2Phase;
-    int SimYSineOperation;
-    int SimYSine1Amplitude;
-    int SimYSine1Frequency;
-    int SimYSine1Phase;
-    int SimYSine2Amplitude;
-    int SimYSine2Frequency;
-    int SimYSine2Phase;
-
-    #define LAST_SIM_DETECTOR_PARAM SimYSine2Phase
+    epics::pvPortDriver::DoubleParamPtr SimGainX;
+    epics::pvPortDriver::DoubleParamPtr SimGainY;
+    epics::pvPortDriver::DoubleParamPtr SimGainRed;
+    epics::pvPortDriver::DoubleParamPtr SimGainGreen;
+    epics::pvPortDriver::DoubleParamPtr SimGainBlue;
+    epics::pvPortDriver::IntParamPtr    SimNoise;
+    epics::pvPortDriver::IntParamPtr    SimResetImage;
+    epics::pvPortDriver::IntParamPtr    SimMode;
+    epics::pvPortDriver::IntParamPtr    SimPeakStartX;
+    epics::pvPortDriver::IntParamPtr    SimPeakStartY;
+    epics::pvPortDriver::IntParamPtr    SimPeakWidthX;
+    epics::pvPortDriver::IntParamPtr    SimPeakWidthY;
+    epics::pvPortDriver::IntParamPtr    SimPeakNumX;
+    epics::pvPortDriver::IntParamPtr    SimPeakNumY;
+    epics::pvPortDriver::IntParamPtr    SimPeakStepX;
+    epics::pvPortDriver::IntParamPtr    SimPeakStepY;
+    epics::pvPortDriver::IntParamPtr    SimPeakHeightVariation;
+    epics::pvPortDriver::DoubleParamPtr SimSineOffset;
+    epics::pvPortDriver::DoubleParamPtr SimSineNoise;
+    epics::pvPortDriver::IntParamPtr    SimXSineOperation;
+    epics::pvPortDriver::DoubleParamPtr SimXSine1Amplitude;
+    epics::pvPortDriver::DoubleParamPtr SimXSine1Frequency;
+    epics::pvPortDriver::DoubleParamPtr SimXSine1Phase;
+    epics::pvPortDriver::DoubleParamPtr SimXSine2Amplitude;
+    epics::pvPortDriver::DoubleParamPtr SimXSine2Frequency;
+    epics::pvPortDriver::DoubleParamPtr SimXSine2Phase;
+    epics::pvPortDriver::IntParamPtr    SimYSineOperation;
+    epics::pvPortDriver::DoubleParamPtr SimYSine1Amplitude;
+    epics::pvPortDriver::DoubleParamPtr SimYSine1Frequency;
+    epics::pvPortDriver::DoubleParamPtr SimYSine1Phase;
+    epics::pvPortDriver::DoubleParamPtr SimYSine2Amplitude;
+    epics::pvPortDriver::DoubleParamPtr SimYSine2Frequency;
+    epics::pvPortDriver::DoubleParamPtr SimYSine2Phase;
 
 private:
     /* These are the methods that are new to this class */
@@ -59,12 +56,13 @@ private:
     template <typename epicsType> int computeLinearRampArray(int sizeX, int sizeY);
     template <typename epicsType> int computePeaksArray(int sizeX, int sizeY);
     template <typename epicsType> int computeSineArray(int sizeX, int sizeY);
-    int computeImage();
+    NDArrayPtr computeImage();
 
     /* Our data */
     epicsEventId startEventId_;
     epicsEventId stopEventId_;
-    NDArray *pRaw_;
+    NDArrayPtr pRaw_;
+    bool acquiring_;
     double *xSine1_;
     double *xSine2_;
     double *ySine1_;
@@ -117,6 +115,4 @@ typedef enum {
 #define SimYSine2AmplitudeString      "SIM_YSINE2_AMPLITUDE"
 #define SimYSine2FrequencyString      "SIM_YSINE2_FREQUENCY"
 #define SimYSine2PhaseString          "SIM_YSINE2_PHASE"
-
-#define NUM_SIM_DETECTOR_PARAMS ((int)(&LAST_SIM_DETECTOR_PARAM - &FIRST_SIM_DETECTOR_PARAM + 1))
 

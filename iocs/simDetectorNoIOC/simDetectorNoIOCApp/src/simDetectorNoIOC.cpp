@@ -9,112 +9,95 @@
  *
  */
 
-#include <epicsThread.h>
-#include <asynPortClient.h>
-#include <NDPluginStats.h>
-#include <NDPluginStdArrays.h>
-#include <NDFileHDF5.h>
 #include <simDetector.h>
+#include <NDPluginDriver.h>
+#include <NDPluginROI.h>
+#include <pv/pvaClient.h>
 
-#define NUM_FRAMES 10
-#define FILE_PATH "/home/epics/scratch/";
-#define REPORT_LEVEL 10
+#include <pv/pvAccess.h>
+#include <pv/channelProviderLocal.h>
+#include <pv/serverContext.h>
+#include <pv/pvDatabase.h>
 
-#ifndef EPICS_LIBCOM_ONLY
-  #include <dbAccess.h>
-#endif
-
-void statsCounterCallback(void *drvPvt, asynUser *pasynUser, epicsInt32 data)
-{
-    printf("statsCounterCallback, counter=%d\n", data);
-}
-
-void acquireFrame(asynInt32Client *acquire)
-{
-  int acquiring;
-  acquire->write(1);
-  do {
-    acquire->read(&acquiring);
-    epicsThreadSleep(0.1);
-  } while (acquiring);
-}
+using namespace std;
+using namespace epics::pvData;
+using namespace epics::pvAccess;
+using namespace epics::pvaClient;
+using namespace epics::pvDatabase;
 
 int main(int argc, char **argv)
 {
-  int numStd;
-  int numStats;
-  int numHDF5Captured;
-  double meanCounts;
-  size_t numWritten;
-  asynStatus status;
-  const char *str;
-  
-#ifndef EPICS_LIBCOM_ONLY
-  // Must set this for callbacks to work if EPICS_LIBCOM_ONLY is not defined
-  interruptAccept = 1;  
-#endif
+    cout << "Begin" << endl;
 
-  simDetector                   simD  =       simDetector("SIM1", 1024, 1024, NDUInt8, 0, 0, 0, 0);
-  NDPluginStats                stats  =     NDPluginStats("STATS1", 20, 0, "SIM1", 0, 0, 0, 0, 0);
-  NDPluginStdArrays        stdArrays  = NDPluginStdArrays("STD1",   20, 0, "SIM1", 0, 0, 0, 0);
-  NDFileHDF5                fileHDF5  =        NDFileHDF5("HDF5",   20, 0, "SIM1", 0, 0, 0);
-  asynInt32Client            acquire  =   asynInt32Client("SIM1",   0, ADAcquireString);
-  asynInt32Client        acquireMode  =   asynInt32Client("SIM1",   0, ADImageModeString);
-  asynInt32Client     arrayCallbacks  =   asynInt32Client("SIM1",   0, NDArrayCallbacksString);
-  asynFloat64Client          simGain  = asynFloat64Client("SIM1",   0, ADGainString);
-  asynInt32Client        statsEnable  =   asynInt32Client("STATS1", 0, NDPluginDriverEnableCallbacksString);
-  asynInt32Client       statsCounter  =   asynInt32Client("STATS1", 0, NDArrayCounterString);
-  asynInt32Client       statsCompute  =   asynInt32Client("STATS1", 0, NDPluginStatsComputeStatisticsString);
-  asynFloat64Client        statsMean  = asynFloat64Client("STATS1", 0, NDPluginStatsMeanValueString);
-  asynInt32Client    stdArraysEnable  =   asynInt32Client("STD1",   0, NDPluginDriverEnableCallbacksString);
-  asynInt32Client   stdArraysCounter  =   asynInt32Client("STD1",   0, NDArrayCounterString);
-  asynInt32Client         hdf5Enable  =   asynInt32Client("HDF5",   0, NDPluginDriverEnableCallbacksString);
-  asynOctetClient           hdf5Name  =   asynOctetClient("HDF5",   0, NDFileNameString);
-  asynOctetClient           hdf5Path  =   asynOctetClient("HDF5",   0, NDFilePathString);
-  asynOctetClient       hdf5Template  =   asynOctetClient("HDF5",   0, NDFileTemplateString);
-  asynInt32Client         hdf5Number  =   asynInt32Client("HDF5",   0, NDFileNumberString);
-  asynInt32Client     hdf5NumCapture  =   asynInt32Client("HDF5",   0, NDFileNumCaptureString);
-  asynInt32Client    hdf5NumCaptured  =   asynInt32Client("HDF5",   0, NDFileNumCapturedString);
-  asynInt32Client      hdf5WriteMode  =   asynInt32Client("HDF5",   0, NDFileWriteModeString);
-  asynInt32Client        hdf5Capture  =   asynInt32Client("HDF5",   0, NDFileCaptureString);
+    const string provider("local");
+    const string simPrefix("13SIM1:cam1:");
+    const string roiPrefix("13SIM1:ROI1:");
 
-  arrayCallbacks.write(1);
-  simGain.write(1.0);
-  acquireMode.write(ADImageSingle);
-  statsEnable.write(1);
-  statsCompute.write(1);
-  stdArraysEnable.write(1);
-  hdf5Enable.write(1);
-  str = "test";
-  hdf5Name.write(str, strlen(str), &numWritten);
-  str = FILE_PATH;
-  hdf5Path.write(str, strlen(str), &numWritten);
-  str = "%s%s_%3.3d.h5";
-  hdf5Template.write(str, strlen(str), &numWritten);
-  hdf5Number.write(1);
-  hdf5NumCapture.write(NUM_FRAMES);
-  hdf5WriteMode.write(NDFileModeStream);
-  status = statsCounter.registerInterruptUser(statsCounterCallback);
-  if (status) {
-    printf("Error calling registerInterruptUser, status=%d\n", status);
-  }
-  pasynManager->report(stdout, REPORT_LEVEL, "SIM1");
-  pasynManager->report(stdout, REPORT_LEVEL, "STATS1");
-  // Acquire 1 frame so HDF5 plugin is configured
-  acquireFrame(&acquire);
-  hdf5Capture.write(1);
-  pasynManager->report(stdout, REPORT_LEVEL, "HDF5");
-  for (int i=0; i<NUM_FRAMES; i++) {
-    acquireFrame(&acquire);
-    stdArraysCounter.read(&numStd);
-    printf("\nNDStdArrays callbacks=%d\n", numStd);
-    statsCounter.read(&numStats);
-    printf("NDStats callbacks    =%d\n", numStats);
-    statsMean.read(&meanCounts);
-    printf("NDStats mean counts =%f\n", meanCounts);
-    hdf5NumCaptured.read(&numHDF5Captured);
-    printf("HDF5 numCaptured     =%d\n", numHDF5Captured);
-  }
+    simDetector simD(simPrefix, 1024, 1024, pvByte, 0, 0);
+    NDPluginROI roi(roiPrefix, 20, false, "local", simPrefix+string("ArrayData"), 0, 0, 0);
+
+    PvaClientPtr client = PvaClient::get(provider);
+
+    string acquireString(simPrefix + string(ADAcquireString));
+    PvaClientChannelPtr acquire = client->channel(acquireString, provider, 1.0);
+    PvaClientPutPtr acquirePut = acquire->put();
+    PvaClientPutDataPtr acquirePutData = acquirePut->getData();
+
+    string gainString(simPrefix + string(ADGainString));
+    PvaClientChannelPtr gain = client->channel(gainString, provider, 1.0);
+    PvaClientPutPtr gainPut = gain->put();
+    PvaClientPutDataPtr gainPutData = gainPut->getData();
+
+    string callbacksString(simPrefix + string(NDArrayCallbacksString));
+    PvaClientChannelPtr arrayCallbacks = client->channel(callbacksString, provider, 1.0);
+    PvaClientPutPtr arrayCallbacksPut = arrayCallbacks->put();
+    PvaClientPutDataPtr arrayCallbacksPutData = arrayCallbacksPut->getData();
+
+    string roiCallbacksString(roiPrefix + string(NDPluginDriverEnableCallbacksString));
+    PvaClientChannelPtr roiEnableCallbacks = client->channel(roiCallbacksString, provider, 1.0);
+    PvaClientPutPtr roiEnableCallbacksPut = roiEnableCallbacks->put();
+    PvaClientPutDataPtr roiEnableCallbacksPutData = roiEnableCallbacksPut->getData();
+
+    string roiDataTypeString(roiPrefix + string(NDPluginROIDataTypeString));
+    PvaClientChannelPtr roiDataType = client->channel(roiDataTypeString, provider, 1.0);
+    PvaClientPutPtr roiDataTypePut = roiDataType->put();
+    PvaClientPutDataPtr roiDataTypePutData = roiDataTypePut->getData();
+
+    string roiDim0MinString(roiPrefix + string(NDPluginROIDim0MinString));
+    PvaClientChannelPtr roiDim0Min = client->channel(roiDim0MinString, provider, 1.0);
+    PvaClientPutPtr roiDim0MinPut = roiDim0Min->put();
+    PvaClientPutDataPtr roiDim0MinPutData = roiDim0MinPut->getData();
+
+    string roiBlockingCallbacksString(roiPrefix + string(NDPluginDriverBlockingCallbacksString));
+    PvaClientChannelPtr roiBlockingCallbacks = client->channel(roiBlockingCallbacksString, provider, 1.0);
+    PvaClientPutPtr roiBlockingCallbacksPut = roiBlockingCallbacks->put();
+    PvaClientPutDataPtr roiBlockingCallbacksPutData = roiBlockingCallbacksPut->getData();
+
+    //roiDim0MinPutData->putDouble(499);
+    //roiDim0MinPut->put();
+
+    roiDataTypePutData->putDouble(1.0);
+    roiDataTypePut->put();
+
+    roiEnableCallbacksPutData->putDouble(1.0);
+    roiEnableCallbacksPut->put();
+
+    roiBlockingCallbacksPutData->putString("true");
+    roiBlockingCallbacksPut->put();
+
+    gainPutData->putDouble(1.0);
+    gainPut->put();
+
+    arrayCallbacksPutData->putDouble(1.0);
+    arrayCallbacksPut->put();
+
+    acquirePutData->putDouble(1);
+    acquirePut->put();
+
+    startPVAServer("local", 0, false, true);
+
+    for(;;);
+    cout << "End" << endl;
 
   return 0;
 }

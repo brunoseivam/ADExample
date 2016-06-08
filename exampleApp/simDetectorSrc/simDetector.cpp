@@ -27,9 +27,20 @@
 #include <cantProceed.h>
 #include <iocsh.h>
 
+#include <vector>
+#include <NDArray.h>
+
+// delete me
+#include <pv/ntndarray.h>
+using namespace epics::nt;
+
 #include "ADDriver.h"
 #include <epicsExport.h>
 #include "simDetector.h"
+
+using namespace std;
+using namespace epics::pvData;
+using namespace epics::pvDatabase;
 
 static const char *driverName = "simDetector";
 
@@ -39,46 +50,37 @@ static const char *driverName = "simDetector";
 #endif
 
 /** Template function to compute the simulated detector data for any data type */
-template <typename epicsType> int simDetector::computeArray(int sizeX, int sizeY)
+template <typename epicsType> int simDetector::computeArray (int sizeX, int sizeY)
 {
-    int simMode=0;
-    int status = asynSuccess;
-
-    status = getIntegerParam (SimMode, &simMode);
-    switch(simMode) {
-        case SimModeLinearRamp:
-            status = computeLinearRampArray<epicsType>(sizeX, sizeY);
-            break;
-        case SimModePeaks:
-            status = computePeaksArray<epicsType>(sizeX, sizeY);
-            break;
-        case SimModeSine:
-            status = computeSineArray<epicsType>(sizeX, sizeY);
-            break;
+    switch(SimMode->get()) {
+        case SimModeLinearRamp: return computeLinearRampArray<epicsType>(sizeX, sizeY);
+        case SimModePeaks:      return computePeaksArray<epicsType>(sizeX, sizeY);
+        case SimModeSine:       return computeSineArray<epicsType>(sizeX, sizeY);
     }
-    return status;
+    return -1;
 }
 
 /** Template function to compute the simulated detector data for any data type */
-template <typename epicsType> int simDetector::computeLinearRampArray(int sizeX, int sizeY)
+template <typename epicsType> int simDetector::computeLinearRampArray (int sizeX, int sizeY)
 {
+    shared_vector<epicsType> data(pRaw_->getData<epicsType>());
+    epicsType *rawData = data.data();
     epicsType *pMono=NULL, *pRed=NULL, *pGreen=NULL, *pBlue=NULL;
-    int columnStep=0, rowStep=0, colorMode;
+    int columnStep=0, rowStep=0;
     epicsType incMono, incRed, incGreen, incBlue;
-    int status = asynSuccess;
-    double exposureTime, gain, gainX, gainY, gainRed, gainGreen, gainBlue;
-    int resetImage;
     int i, j;
 
-    status = getDoubleParam (ADGain,        &gain);
-    status = getDoubleParam (SimGainX,      &gainX);
-    status = getDoubleParam (SimGainY,      &gainY);
-    status = getDoubleParam (SimGainRed,    &gainRed);
-    status = getDoubleParam (SimGainGreen,  &gainGreen);
-    status = getDoubleParam (SimGainBlue,   &gainBlue);
-    status = getIntegerParam(SimResetImage, &resetImage);
-    status = getIntegerParam(NDColorMode,   &colorMode);
-    status = getDoubleParam (ADAcquireTime, &exposureTime);
+    double gain         = ADGain->get();
+    double gainX        = SimGainX->get();
+    double gainY        = SimGainY->get();
+    double gainRed      = SimGainRed->get();
+    double gainGreen    = SimGainGreen->get();
+    double gainBlue     = SimGainBlue->get();
+    int resetImage      = SimResetImage->get();
+    int colorMode       = NDColorMode->get();
+    double exposureTime = ADAcquireTime->get();
+
+    //gain = 1.0;
 
     /* The intensity at each pixel[i,j] is:
      * (i * gainX + j* gainY) + imageCounter * gain * exposureTime * 1000. */
@@ -88,346 +90,335 @@ template <typename epicsType> int simDetector::computeLinearRampArray(int sizeX,
     incBlue  = (epicsType) gainBlue  * incMono;
 
     switch (colorMode) {
-        case NDColorModeMono:
-            pMono = (epicsType *)pRaw_->pData;
-            break;
-        case NDColorModeRGB1:
-            columnStep = 3;
-            rowStep = 0;
-            pRed   = (epicsType *)pRaw_->pData;
-            pGreen = (epicsType *)pRaw_->pData+1;
-            pBlue  = (epicsType *)pRaw_->pData+2;
-            break;
-        case NDColorModeRGB2:
-            columnStep = 1;
-            rowStep = 2 * sizeX;
-            pRed   = (epicsType *)pRaw_->pData;
-            pGreen = (epicsType *)pRaw_->pData + sizeX;
-            pBlue  = (epicsType *)pRaw_->pData + 2*sizeX;
-            break;
-        case NDColorModeRGB3:
-            columnStep = 1;
-            rowStep = 0;
-            pRed   = (epicsType *)pRaw_->pData;
-            pGreen = (epicsType *)pRaw_->pData + sizeX*sizeY;
-            pBlue  = (epicsType *)pRaw_->pData + 2*sizeX*sizeY;
-            break;
+    case NDColorModeMono:
+        pMono = (epicsType *)rawData;
+        break;
+    case NDColorModeRGB1:
+        columnStep = 3;
+        rowStep = 0;
+        pRed   = (epicsType *)rawData;
+        pGreen = (epicsType *)rawData+1;
+        pBlue  = (epicsType *)rawData+2;
+        break;
+    case NDColorModeRGB2:
+        columnStep = 1;
+        rowStep = 2 * sizeX;
+        pRed   = (epicsType *)rawData;
+        pGreen = (epicsType *)rawData + sizeX;
+        pBlue  = (epicsType *)rawData + 2*sizeX;
+        break;
+    case NDColorModeRGB3:
+        columnStep = 1;
+        rowStep = 0;
+        pRed   = (epicsType *)rawData;
+        pGreen = (epicsType *)rawData + sizeX*sizeY;
+        pBlue  = (epicsType *)rawData + 2*sizeX*sizeY;
+        break;
     }
-    pRaw_->pAttributeList->add("ColorMode", "Color mode", NDAttrInt32, &colorMode);
+    //pRaw_->pAttributeList->add("ColorMode", "Color mode", NDAttrInt32, &colorMode);
 
     if (resetImage) {
         for (i=0; i<sizeY; i++) {
             switch (colorMode) {
-                case NDColorModeMono:
-                    for (j=0; j<sizeX; j++) {
-                        (*pMono++) = (epicsType) (incMono * (gainX*j + gainY*i));
-                    }
-                    break;
-                case NDColorModeRGB1:
-                case NDColorModeRGB2:
-                case NDColorModeRGB3:
-                    for (j=0; j<sizeX; j++) {
-                        *pRed   = (epicsType) (incRed   * (gainX*j + gainY*i));
-                        *pGreen = (epicsType) (incGreen * (gainX*j + gainY*i));
-                        *pBlue  = (epicsType) (incBlue  * (gainX*j + gainY*i));
-                        pRed   += columnStep;
-                        pGreen += columnStep;
-                        pBlue  += columnStep;
-                    }
-                    pRed   += rowStep;
-                    pGreen += rowStep;
-                    pBlue  += rowStep;
-                    break;
+            case NDColorModeMono:
+                for (j=0; j<sizeX; j++) {
+                    (*pMono++) = (epicsType) (incMono * (gainX*j + gainY*i));
+                }
+                break;
+            case NDColorModeRGB1:
+            case NDColorModeRGB2:
+            case NDColorModeRGB3:
+                for (j=0; j<sizeX; j++) {
+                    *pRed   = (epicsType) (incRed   * (gainX*j + gainY*i));
+                    *pGreen = (epicsType) (incGreen * (gainX*j + gainY*i));
+                    *pBlue  = (epicsType) (incBlue  * (gainX*j + gainY*i));
+                    pRed   += columnStep;
+                    pGreen += columnStep;
+                    pBlue  += columnStep;
+                }
+                pRed   += rowStep;
+                pGreen += rowStep;
+                pBlue  += rowStep;
+                break;
             }
         }
     } else {
         for (i=0; i<sizeY; i++) {
             switch (colorMode) {
-                case NDColorModeMono:
-                    for (j=0; j<sizeX; j++) {
-                            *pMono++ += incMono;
-                    }
-                    break;
-                case NDColorModeRGB1:
-                case NDColorModeRGB2:
-                case NDColorModeRGB3:
-                    for (j=0; j<sizeX; j++) {
-                        *pRed   += incRed;
-                        *pGreen += incGreen;
-                        *pBlue  += incBlue;
-                        pRed   += columnStep;
-                        pGreen += columnStep;
-                        pBlue  += columnStep;
-                    }
-                    pRed   += rowStep;
-                    pGreen += rowStep;
-                    pBlue  += rowStep;
-                    break;
+            case NDColorModeMono:
+                for (j=0; j<sizeX; j++) {
+                    *pMono++ += incMono;
+                }
+                break;
+            case NDColorModeRGB1:
+            case NDColorModeRGB2:
+            case NDColorModeRGB3:
+                for (j=0; j<sizeX; j++) {
+                    *pRed   += incRed;
+                    *pGreen += incGreen;
+                    *pBlue  += incBlue;
+                    pRed   += columnStep;
+                    pGreen += columnStep;
+                    pBlue  += columnStep;
+                }
+                pRed   += rowStep;
+                pGreen += rowStep;
+                pBlue  += rowStep;
+                break;
             }
         }
     }
-    return(status);
+
+    pRaw_->setData<epicsType>(data);
+    return 0;
 }
 
 /** Compute array for array of peaks */
 template <typename epicsType> int simDetector::computePeaksArray(int sizeX, int sizeY)
 {
+    shared_vector<epicsType> data(pRaw_->getData<epicsType>());
+    epicsType *rawData = data.data();
     epicsType *pMono=NULL, *pRed=NULL;
     epicsType *pMono2=NULL, *pRed2=NULL, *pGreen2=NULL, *pBlue2=NULL;
-    int columnStep=0, colorMode;
-    int peaksStartX, peaksStartY, peaksStepX, peaksStepY;
-    int peaksNumX, peaksNumY, peaksWidthX, peaksWidthY;
-     int status = asynSuccess;
+    int columnStep=0;
     int i,j,k,l;
     int minX, maxX, minY,maxY;
     int offsetX, offsetY;
-    int peakVariation, noisePct;
     double gainVariation, noise;
-    double gain, gainX, gainY, gainRed, gainGreen, gainBlue;
     double gaussX, gaussY;
     double tmpValue;
 
-    status = getIntegerParam(NDColorMode,   &colorMode);
-    status = getDoubleParam (ADGain,        &gain);
-    status = getDoubleParam (SimGainX,      &gainX);
-    status = getDoubleParam (SimGainY,      &gainY);
-    status = getDoubleParam (SimGainRed,    &gainRed);
-    status = getDoubleParam (SimGainGreen,  &gainGreen);
-    status = getDoubleParam (SimGainBlue,   &gainBlue);
-    status = getIntegerParam (SimPeakStartX,  &peaksStartX);
-    status = getIntegerParam (SimPeakStartY,  &peaksStartY);
-    status = getIntegerParam (SimPeakStepX,  &peaksStepX);
-    status = getIntegerParam (SimPeakStepY,  &peaksStepY);
-    status = getIntegerParam (SimPeakNumX,  &peaksNumX);
-    status = getIntegerParam (SimPeakNumY,  &peaksNumY);
-    status = getIntegerParam (SimPeakWidthX,  &peaksWidthX);
-    status = getIntegerParam (SimPeakWidthY,  &peaksWidthY);
-    status = getIntegerParam (SimPeakHeightVariation,  &peakVariation);
-    status = getIntegerParam (SimNoise,  &noisePct);
+    int colorMode       = NDColorMode->get();
+    double gain         = ADGain->get();
+    double gainX        = SimGainX->get();
+    double gainY        = SimGainY->get();
+    double gainRed      = SimGainRed->get();
+    double gainGreen    = SimGainGreen->get();
+    double gainBlue     = SimGainBlue->get();
+    int peaksStartX     = SimPeakStartX->get();
+    int peaksStartY     = SimPeakStartY->get();
+    int peaksStepX      = SimPeakStepX->get();
+    int peaksStepY      = SimPeakStepY->get();
+    int peaksNumX       = SimPeakNumX->get();
+    int peaksNumY       = SimPeakNumY->get();
+    int peaksWidthX     = SimPeakWidthX->get();
+    int peaksWidthY     = SimPeakWidthY->get();
+    int peakVariation   = SimPeakHeightVariation->get();
+    int noisePct        = SimNoise->get();
 
-       switch (colorMode) {
-        case NDColorModeMono:
-            pMono = (epicsType *)pRaw_->pData;
-            break;
-        case NDColorModeRGB1:
-            columnStep = 3;
-            pRed   = (epicsType *)pRaw_->pData;
-            break;
-        case NDColorModeRGB2:
-            columnStep = 1;
-            pRed   = (epicsType *)pRaw_->pData;
-            break;
-        case NDColorModeRGB3:
-            columnStep = 1;
-            pRed   = (epicsType *)pRaw_->pData;
-            break;
-    }
-    pRaw_->pAttributeList->add("ColorMode", "Color mode", NDAttrInt32, &colorMode);
     switch (colorMode) {
-        case NDColorModeMono:
-            // Clear the Image
-            pMono2 = pMono;
-            for (i = 0; i<sizeY; i++) {
-                for (j = 0; j<sizeX; j++) {
-                    (*pMono2++) = (epicsType)0;
-                }
-            }
-            for (i = 0; i<peaksNumY; i++) {
-                for (j = 0; j<peaksNumX; j++) {
-                    gaussX = 0;
-                    gaussY = 0;
-                    if (peakVariation !=0) {
-                        gainVariation = 1.0 + (rand()%peakVariation+1)/100.0;
-                    }
-                    else{
-                        gainVariation = 1.0;
-                    }
-                    offsetY = i * peaksStepY + peaksStartY;
-                    offsetX = j * peaksStepX + peaksStartX;
-                    minX = (offsetX>4*peaksWidthX) ?(offsetX -4*peaksWidthX):0;
-                    maxX = (offsetX+4*peaksWidthX<sizeX) ?(offsetX + 4*peaksWidthX):sizeX;
-                    minY = (offsetY>4*peaksWidthY) ?(offsetY -4*peaksWidthY):0;
-                    maxY = (offsetY+4*peaksWidthY<sizeY) ?(offsetY + 4*peaksWidthY):sizeY;
-                    for (k =minY; k<maxY; k++) {
-                        pMono2 = pMono + (minX + k*sizeX);
-                        for (l=minX; l<maxX; l++) {
-                            if (noisePct !=0) {
-                                noise = 1.0 + (rand()%noisePct+1)/100.0;
-                            }
-                            else {
-                                noise = 1.0;
-                            }
-                            gaussY = gainY * exp( -pow((double)(k-offsetY)/(double)peaksWidthY,2.0)/2.0 );
-                            gaussX = gainX * exp( -pow((double)(l-offsetX)/(double)peaksWidthX,2.0)/2.0 );
-                            tmpValue =  gainVariation*gain * gaussX * gaussY*noise;
-                            (*pMono2) += (epicsType)tmpValue;
-                            pMono2++;
-                        }
-                    }
-                }
-            }
-            break;
-        case NDColorModeRGB1:
-        case NDColorModeRGB2:
-        case NDColorModeRGB3:
-            // Clear the Image
-            pRed2 = pRed;
-            for (i = 0; i<sizeY; i++) {
-                for (j = 0; j<sizeX; j++) {
-                    (*pRed2++) = (epicsType)0;  //Since we are just clearing the field we will do this with one pointer
-                    (*pRed2++) = (epicsType)0;
-                    (*pRed2++) = (epicsType)0;
-                }
-            }
-            for (i = 0; i<peaksNumY; i++) {
-                for (j = 0; j<peaksNumX; j++) {
-                    if (peakVariation !=0) {
-                        gainVariation = 1.0 + (rand()%peakVariation+1)/100.0;
-                    }
-                    else{
-                        gainVariation = 1.0;
-                    }
-                    offsetY = i * peaksStepY + peaksStartY;
-                    offsetX = j * peaksStepX + peaksStartX;
-                    minX = (offsetX>4*peaksWidthX) ?(offsetX -4*peaksWidthX):0;
-                    maxX = (offsetX+4*peaksWidthX<sizeX) ?(offsetX + 4*peaksWidthX):sizeX;
-                    minY = (offsetY>4*peaksWidthY) ?(offsetY -4*peaksWidthY):0;
-                    maxY = (offsetY+4*peaksWidthY<sizeY) ?(offsetY + 4*peaksWidthY):sizeY;
-                    for (k =minY; k<maxY; k++) {
-                        //Move to the starting point for this peak
-                        switch (colorMode) {
-                            case NDColorModeRGB1:
-                                pRed2 = pRed + (minX*columnStep + k*sizeX*columnStep);
-                                pGreen2 = pRed2 + 1;
-                                pBlue2 = pRed2 + 2;
-                                break;
-                            case NDColorModeRGB2:
-                                pRed2 = pRed + (minX*columnStep + k*3*sizeX*columnStep);
-                                pGreen2 = pRed2 + sizeX;
-                                pBlue2 = pRed2 + 2*sizeX;
-                                break;
-                            case NDColorModeRGB3:
-                                pRed2 = pRed + (minX*columnStep + k*sizeX*columnStep);
-                                pGreen2 = pRed2 + sizeX*sizeY;
-                                pBlue2 = pRed2 + 2*sizeX*sizeY;
-                                break;
-                        }
-                        //Fill in a row for this peak
-                        for (l=minX; l<maxX; l++) {
-                            if (noisePct !=0) {
-                                noise = 1.0 + (rand()%noisePct+1)/100.0;
-                            }
-                            else {
-                                noise = 1.0;
-                            }
-                            gaussY = gainY * exp( -pow((double)(k-offsetY)/(double)peaksWidthY,2.0)/2.0 );
-                            gaussX = gainX * exp( -pow((double)(l-offsetX)/(double)peaksWidthX,2.0)/2.0 );
-                            tmpValue =  gainVariation*gain * gaussX * gaussY*noise;
-                            (*pRed2) += (epicsType)(gainRed*tmpValue);
-                            (*pGreen2) += (epicsType)(gainGreen*tmpValue);
-                            (*pBlue2) += (epicsType)(gainBlue*tmpValue);
-
-                            pRed2 += columnStep;
-                            pGreen2 += columnStep;
-                            pBlue2 += columnStep;
-                        }
-                    }
-                }
-            }
-
-
-
-            break;
-
+    case NDColorModeMono:
+        pMono = (epicsType *)rawData;
+        break;
+    case NDColorModeRGB1:
+        columnStep = 3;
+        pRed   = (epicsType *)rawData;
+        break;
+    case NDColorModeRGB2:
+        columnStep = 1;
+        pRed   = (epicsType *)rawData;
+        break;
+    case NDColorModeRGB3:
+        columnStep = 1;
+        pRed   = (epicsType *)rawData;
+        break;
     }
-    return status;
+    //pRaw_->pAttributeList->add("ColorMode", "Color mode", NDAttrInt32, &colorMode);
+    switch (colorMode) {
+    case NDColorModeMono:
+        // Clear the Image
+        pMono2 = pMono;
+        for (i = 0; i<sizeY; i++) {
+            for (j = 0; j<sizeX; j++) {
+                (*pMono2++) = (epicsType)0;
+            }
+        }
+        for (i = 0; i<peaksNumY; i++) {
+            for (j = 0; j<peaksNumX; j++) {
+                gaussX = 0;
+                gaussY = 0;
+                if (peakVariation !=0) {
+                    gainVariation = 1.0 + (rand()%peakVariation+1)/100.0;
+                }
+                else{
+                    gainVariation = 1.0;
+                }
+                offsetY = i * peaksStepY + peaksStartY;
+                offsetX = j * peaksStepX + peaksStartX;
+                minX = (offsetX>4*peaksWidthX) ?(offsetX -4*peaksWidthX):0;
+                maxX = (offsetX+4*peaksWidthX<sizeX) ?(offsetX + 4*peaksWidthX):sizeX;
+                minY = (offsetY>4*peaksWidthY) ?(offsetY -4*peaksWidthY):0;
+                maxY = (offsetY+4*peaksWidthY<sizeY) ?(offsetY + 4*peaksWidthY):sizeY;
+                for (k =minY; k<maxY; k++) {
+                    pMono2 = pMono + (minX + k*sizeX);
+                    for (l=minX; l<maxX; l++) {
+                        if (noisePct !=0) {
+                            noise = 1.0 + (rand()%noisePct+1)/100.0;
+                        }
+                        else {
+                            noise = 1.0;
+                        }
+                        gaussY = gainY * exp( -pow((double)(k-offsetY)/(double)peaksWidthY,2.0)/2.0 );
+                        gaussX = gainX * exp( -pow((double)(l-offsetX)/(double)peaksWidthX,2.0)/2.0 );
+                        tmpValue =  gainVariation*gain * gaussX * gaussY*noise;
+                        (*pMono2) += (epicsType)tmpValue;
+                        pMono2++;
+                    }
+                }
+            }
+        }
+        break;
+    case NDColorModeRGB1:
+    case NDColorModeRGB2:
+    case NDColorModeRGB3:
+        // Clear the Image
+        pRed2 = pRed;
+        for (i = 0; i<sizeY; i++) {
+            for (j = 0; j<sizeX; j++) {
+                (*pRed2++) = (epicsType)0;  //Since we are just clearing the field we will do this with one pointer
+                (*pRed2++) = (epicsType)0;
+                (*pRed2++) = (epicsType)0;
+            }
+        }
+        for (i = 0; i<peaksNumY; i++) {
+            for (j = 0; j<peaksNumX; j++) {
+                if (peakVariation !=0) {
+                    gainVariation = 1.0 + (rand()%peakVariation+1)/100.0;
+                }
+                else{
+                    gainVariation = 1.0;
+                }
+                offsetY = i * peaksStepY + peaksStartY;
+                offsetX = j * peaksStepX + peaksStartX;
+                minX = (offsetX>4*peaksWidthX) ?(offsetX -4*peaksWidthX):0;
+                maxX = (offsetX+4*peaksWidthX<sizeX) ?(offsetX + 4*peaksWidthX):sizeX;
+                minY = (offsetY>4*peaksWidthY) ?(offsetY -4*peaksWidthY):0;
+                maxY = (offsetY+4*peaksWidthY<sizeY) ?(offsetY + 4*peaksWidthY):sizeY;
+                for (k =minY; k<maxY; k++) {
+                    //Move to the starting point for this peak
+                    switch (colorMode) {
+                    case NDColorModeRGB1:
+                        pRed2 = pRed + (minX*columnStep + k*sizeX*columnStep);
+                        pGreen2 = pRed2 + 1;
+                        pBlue2 = pRed2 + 2;
+                        break;
+                    case NDColorModeRGB2:
+                        pRed2 = pRed + (minX*columnStep + k*3*sizeX*columnStep);
+                        pGreen2 = pRed2 + sizeX;
+                        pBlue2 = pRed2 + 2*sizeX;
+                        break;
+                    case NDColorModeRGB3:
+                        pRed2 = pRed + (minX*columnStep + k*sizeX*columnStep);
+                        pGreen2 = pRed2 + sizeX*sizeY;
+                        pBlue2 = pRed2 + 2*sizeX*sizeY;
+                        break;
+                    }
+                    //Fill in a row for this peak
+                    for (l=minX; l<maxX; l++) {
+                        if (noisePct !=0) {
+                            noise = 1.0 + (rand()%noisePct+1)/100.0;
+                        }
+                        else {
+                            noise = 1.0;
+                        }
+                        gaussY = gainY * exp( -pow((double)(k-offsetY)/(double)peaksWidthY,2.0)/2.0 );
+                        gaussX = gainX * exp( -pow((double)(l-offsetX)/(double)peaksWidthX,2.0)/2.0 );
+                        tmpValue =  gainVariation*gain * gaussX * gaussY*noise;
+                        (*pRed2) += (epicsType)(gainRed*tmpValue);
+                        (*pGreen2) += (epicsType)(gainGreen*tmpValue);
+                        (*pBlue2) += (epicsType)(gainBlue*tmpValue);
+
+                        pRed2 += columnStep;
+                        pGreen2 += columnStep;
+                        pBlue2 += columnStep;
+                    }
+                }
+            }
+        }
+        break;
+    }
+    pRaw_->setData<epicsType>(data);
+    return 0;
 }
 
 /** Template function to compute the simulated detector data for any data type */
 template <typename epicsType> int simDetector::computeSineArray(int sizeX, int sizeY)
 {
+    shared_vector<epicsType> data(pRaw_->getData<epicsType>());
+    epicsType *rawData = data.data();
+
     epicsType *pMono=NULL, *pRed=NULL, *pGreen=NULL, *pBlue=NULL;
-    int columnStep=0, rowStep=0, colorMode;
-    int status = asynSuccess;
-    int xSineOperation, ySineOperation;   
-    double exposureTime, gain, gainX, gainY, gainRed, gainGreen, gainBlue;
-    double sineOffset, sineNoise;
-    double xSine1Amplitude, xSine1Frequency, xSine1Phase;
-    double xSine2Amplitude, xSine2Frequency, xSine2Phase;
-    double ySine1Amplitude, ySine1Frequency, ySine1Phase;
-    double ySine2Amplitude, ySine2Frequency, ySine2Phase;
+    int columnStep=0, rowStep=0;
     double rndm;
     double xTime, yTime;
-    int resetImage;
     int i, j;
 
-    status = getDoubleParam (ADGain,            &gain);
-    status = getDoubleParam (SimGainX,          &gainX);
-    status = getDoubleParam (SimGainY,          &gainY);
-    status = getDoubleParam (SimGainRed,        &gainRed);
-    status = getDoubleParam (SimGainGreen,      &gainGreen);
-    status = getDoubleParam (SimGainBlue,       &gainBlue);
-    status = getIntegerParam(SimResetImage,     &resetImage);
-    status = getIntegerParam(NDColorMode,       &colorMode);
-    status = getDoubleParam (ADAcquireTime,     &exposureTime);
-    status = getDoubleParam(SimSineOffset,      &sineOffset);
-    status = getDoubleParam(SimSineNoise,       &sineNoise);
-    status = getIntegerParam(SimXSineOperation, &xSineOperation);
-    status = getDoubleParam(SimXSine1Amplitude, &xSine1Amplitude);
-    status = getDoubleParam(SimXSine1Frequency, &xSine1Frequency);
-    status = getDoubleParam(SimXSine1Phase,     &xSine1Phase);
-    status = getDoubleParam(SimXSine2Amplitude, &xSine2Amplitude);
-    status = getDoubleParam(SimXSine2Frequency, &xSine2Frequency);
-    status = getDoubleParam(SimXSine2Phase,     &xSine2Phase);
-    status = getIntegerParam(SimYSineOperation, &ySineOperation);
-    status = getDoubleParam(SimYSine1Amplitude, &ySine1Amplitude);
-    status = getDoubleParam(SimYSine1Frequency, &ySine1Frequency);
-    status = getDoubleParam(SimYSine1Phase,     &ySine1Phase);
-    status = getDoubleParam(SimYSine2Amplitude, &ySine2Amplitude);
-    status = getDoubleParam(SimYSine2Frequency, &ySine2Frequency);
-    status = getDoubleParam(SimYSine2Phase,     &ySine2Phase);
+    double gain             = ADGain->get();
+    double gainX            = SimGainX->get();
+    double gainY            = SimGainY->get();
+    double gainRed          = SimGainRed->get();
+    double gainGreen        = SimGainGreen->get();
+    double gainBlue         = SimGainBlue->get();
+    int resetImage          = SimResetImage->get();
+    int colorMode           = NDColorMode->get();
+    double sineOffset       = SimSineOffset->get();
+    double sineNoise        = SimSineNoise->get();
+    int xSineOperation      = SimXSineOperation->get();
+    double xSine1Amplitude  = SimXSine1Amplitude->get();
+    double xSine1Frequency  = SimXSine1Frequency->get();
+    double xSine1Phase      = SimXSine1Phase->get();
+    double xSine2Amplitude  = SimXSine2Amplitude->get();
+    double xSine2Frequency  = SimXSine2Frequency->get();
+    double xSine2Phase      = SimXSine2Phase->get();
+    int ySineOperation      = SimYSineOperation->get();
+    double ySine1Amplitude  = SimYSine1Amplitude->get();
+    double ySine1Frequency  = SimYSine1Frequency->get();
+    double ySine1Phase      = SimYSine1Phase->get();
+    double ySine2Amplitude  = SimYSine2Amplitude->get();
+    double ySine2Frequency  = SimYSine2Frequency->get();
+    double ySine2Phase      = SimYSine2Phase->get();
 
     switch (colorMode) {
-        case NDColorModeMono:
-            pMono = (epicsType *)pRaw_->pData;
-            break;
-        case NDColorModeRGB1:
-            columnStep = 3;
-            rowStep = 0;
-            pRed   = (epicsType *)pRaw_->pData;
-            pGreen = (epicsType *)pRaw_->pData+1;
-            pBlue  = (epicsType *)pRaw_->pData+2;
-            break;
-        case NDColorModeRGB2:
-            columnStep = 1;
-            rowStep = 2 * sizeX;
-            pRed   = (epicsType *)pRaw_->pData;
-            pGreen = (epicsType *)pRaw_->pData + sizeX;
-            pBlue  = (epicsType *)pRaw_->pData + 2*sizeX;
-            break;
-        case NDColorModeRGB3:
-            columnStep = 1;
-            rowStep = 0;
-            pRed   = (epicsType *)pRaw_->pData;
-            pGreen = (epicsType *)pRaw_->pData + sizeX*sizeY;
-            pBlue  = (epicsType *)pRaw_->pData + 2*sizeX*sizeY;
-            break;
+    case NDColorModeMono:
+        pMono = (epicsType *)rawData;
+        break;
+    case NDColorModeRGB1:
+        columnStep = 3;
+        rowStep = 0;
+        pRed   = (epicsType *)rawData;
+        pGreen = (epicsType *)rawData+1;
+        pBlue  = (epicsType *)rawData+2;
+        break;
+    case NDColorModeRGB2:
+        columnStep = 1;
+        rowStep = 2 * sizeX;
+        pRed   = (epicsType *)rawData;
+        pGreen = (epicsType *)rawData + sizeX;
+        pBlue  = (epicsType *)rawData + 2*sizeX;
+        break;
+    case NDColorModeRGB3:
+        columnStep = 1;
+        rowStep = 0;
+        pRed   = (epicsType *)rawData;
+        pGreen = (epicsType *)rawData + sizeX*sizeY;
+        pBlue  = (epicsType *)rawData + 2*sizeX*sizeY;
+        break;
     }
-    pRaw_->pAttributeList->add("ColorMode", "Color mode", NDAttrInt32, &colorMode);
+    //pRaw_->pAttributeList->add("ColorMode", "Color mode", NDAttrInt32, &colorMode);
 
     if (resetImage) {
-      if (xSine1_) free(xSine1_);
-      if (xSine2_) free(xSine2_);
-      if (ySine1_) free(ySine1_);
-      if (ySine2_) free(ySine2_);
-      xSine1_ = (double *)calloc(sizeX, sizeof(double));
-      xSine2_ = (double *)calloc(sizeX, sizeof(double));
-      ySine1_ = (double *)calloc(sizeY, sizeof(double));
-      ySine2_ = (double *)calloc(sizeY, sizeof(double));
-      xSineCounter_ = 0;
-      ySineCounter_ = 0;
-    } 
-    
+        if (xSine1_) free(xSine1_);
+        if (xSine2_) free(xSine2_);
+        if (ySine1_) free(ySine1_);
+        if (ySine2_) free(ySine2_);
+        xSine1_ = (double *)calloc(sizeX, sizeof(double));
+        xSine2_ = (double *)calloc(sizeX, sizeof(double));
+        ySine1_ = (double *)calloc(sizeY, sizeof(double));
+        ySine2_ = (double *)calloc(sizeY, sizeof(double));
+        xSineCounter_ = 0;
+        ySineCounter_ = 0;
+    }
+
     for (i=0; i<sizeX; i++) {
         xTime = xSineCounter_++ * gainX / sizeX;
         xSine1_[i] = xSine1Amplitude * sin((xTime  * xSine1Frequency + xSine1Phase/360.) * 2. * M_PI);
@@ -437,8 +428,8 @@ template <typename epicsType> int simDetector::computeSineArray(int sizeX, int s
         yTime = ySineCounter_++ * gainY / sizeY;
         ySine1_[i] = ySine1Amplitude * sin((yTime  * ySine1Frequency + ySine1Phase/360.) * 2. * M_PI);
         ySine2_[i] = ySine2Amplitude * sin((yTime  * ySine2Frequency + ySine2Phase/360.) * 2. * M_PI);
-    }                             
-    
+    }
+
     if (colorMode == NDColorModeMono) {
         if (xSineOperation == SimSineOperationAdd) {
             for (i=0; i<sizeX; i++) {
@@ -463,119 +454,94 @@ template <typename epicsType> int simDetector::computeSineArray(int sizeX, int s
     }
     for (i=0; i<sizeY; i++) {
         switch (colorMode) {
-            case NDColorModeMono:
-                for (j=0; j<sizeX; j++) {
-                    rndm = 2.*(rand()/(double)RAND_MAX - 0.5);
-                    *pMono++ = (epicsType) (gain * (sineOffset + sineNoise*rndm + ySine1_[i] + xSine1_[j]));
-                }
-                break;
-            case NDColorModeRGB1:
-            case NDColorModeRGB2:
-            case NDColorModeRGB3:
-                for (j=0; j<sizeX; j++) {
-                    rndm = 2.*(rand()/(double)RAND_MAX - 0.5);
-                    *pRed   = (epicsType)(gain * gainRed   * (sineOffset + sineNoise*rndm + xSine1_[j]));
-                    rndm = 2.*(rand()/(double)RAND_MAX - 0.5);
-                    *pGreen = (epicsType)(gain * gainGreen * (sineOffset + sineNoise*rndm + ySine1_[i]));
-                    rndm = 2.*(rand()/(double)RAND_MAX - 0.5);
-                    *pBlue  = (epicsType)(gain * gainBlue  * (sineOffset + sineNoise*rndm + (xSine2_[j] + ySine2_[i])/2.));
-                    pRed   += columnStep;
-                    pGreen += columnStep;
-                    pBlue  += columnStep;
-                }
-                pRed   += rowStep;
-                pGreen += rowStep;
-                pBlue  += rowStep;
-                break;
+        case NDColorModeMono:
+            for (j=0; j<sizeX; j++) {
+                rndm = 2.*(rand()/(double)RAND_MAX - 0.5);
+                *pMono++ = (epicsType) (gain * (sineOffset + sineNoise*rndm + ySine1_[i] + xSine1_[j]));
+            }
+            break;
+        case NDColorModeRGB1:
+        case NDColorModeRGB2:
+        case NDColorModeRGB3:
+            for (j=0; j<sizeX; j++) {
+                rndm = 2.*(rand()/(double)RAND_MAX - 0.5);
+                *pRed   = (epicsType)(gain * gainRed   * (sineOffset + sineNoise*rndm + xSine1_[j]));
+                rndm = 2.*(rand()/(double)RAND_MAX - 0.5);
+                *pGreen = (epicsType)(gain * gainGreen * (sineOffset + sineNoise*rndm + ySine1_[i]));
+                rndm = 2.*(rand()/(double)RAND_MAX - 0.5);
+                *pBlue  = (epicsType)(gain * gainBlue  * (sineOffset + sineNoise*rndm + (xSine2_[j] + ySine2_[i])/2.));
+                pRed   += columnStep;
+                pGreen += columnStep;
+                pBlue  += columnStep;
+            }
+            pRed   += rowStep;
+            pGreen += rowStep;
+            pBlue  += rowStep;
+            break;
         }
     }
-    return(status);
-}
 
-/** Controls the shutter */
-void simDetector::setShutter(int open)
-{
-    int shutterMode;
-
-    getIntegerParam(ADShutterMode, &shutterMode);
-    if (shutterMode == ADShutterModeDetector) {
-        /* Simulate a shutter by just changing the status readback */
-        setIntegerParam(ADShutterStatus, open);
-    } else {
-        /* For no shutter or EPICS shutter call the base class method */
-        ADDriver::setShutter(open);
-    }
+    pRaw_->setData<epicsType>(data);
+    return 0;
 }
 
 /** Computes the new image data */
-int simDetector::computeImage()
+NDArrayPtr simDetector::computeImage()
 {
-    int status = asynSuccess;
-    NDDataType_t dataType;
-    int itemp;
-    int binX, binY, minX, minY, sizeX, sizeY, reverseX, reverseY;
     int xDim=0, yDim=1, colorDim=-1;
-    int resetImage;
-    int maxSizeX, maxSizeY;
-    int colorMode;
     int ndims=0;
-    NDDimension_t dimsOut[3];
     size_t dims[3];
-    NDArrayInfo_t arrayInfo;
-    NDArray *pImage;
+    NDArrayPtr nullImage;
     const char* functionName = "computeImage";
+    int status;
 
     /* NOTE: The caller of this function must have taken the mutex */
-
-    status |= getIntegerParam(ADBinX,         &binX);
-    status |= getIntegerParam(ADBinY,         &binY);
-    status |= getIntegerParam(ADMinX,         &minX);
-    status |= getIntegerParam(ADMinY,         &minY);
-    status |= getIntegerParam(ADSizeX,        &sizeX);
-    status |= getIntegerParam(ADSizeY,        &sizeY);
-    status |= getIntegerParam(ADReverseX,     &reverseX);
-    status |= getIntegerParam(ADReverseY,     &reverseY);
-    status |= getIntegerParam(ADMaxSizeX,     &maxSizeX);
-    status |= getIntegerParam(ADMaxSizeY,     &maxSizeY);
-    status |= getIntegerParam(NDColorMode,    &colorMode);
-    status |= getIntegerParam(NDDataType,     &itemp); dataType = (NDDataType_t)itemp;
-    status |= getIntegerParam(SimResetImage,  &resetImage);
-    if (status) asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
-                    "%s:%s: error getting parameters\n",
-                    driverName, functionName);
+    int binX                = ADBinX->get();
+    int binY                = ADBinY->get();
+    int minX                = ADMinX->get();
+    int minY                = ADMinY->get();
+    int sizeX               = ADSizeX->get();
+    int sizeY               = ADSizeY->get();
+    int reverseX            = ADReverseX->get();
+    int reverseY            = ADReverseY->get();
+    int maxSizeX            = ADMaxSizeX->get();
+    int maxSizeY            = ADMaxSizeY->get();
+    int colorMode           = NDColorMode->get();
+    ScalarType dataType     = (ScalarType)NDDataType->get();
+    int resetImage          = SimResetImage->get();
 
     /* Make sure parameters are consistent, fix them if they are not */
     if (binX < 1) {
         binX = 1;
-        status |= setIntegerParam(ADBinX, binX);
+        ADBinX->put(binX);
     }
     if (binY < 1) {
         binY = 1;
-        status |= setIntegerParam(ADBinY, binY);
+        ADBinY->put(binX);
     }
     if (minX < 0) {
         minX = 0;
-        status |= setIntegerParam(ADMinX, minX);
+        ADMinX->put(minX);
     }
     if (minY < 0) {
         minY = 0;
-        status |= setIntegerParam(ADMinY, minY);
+        ADMinY->put(minY);
     }
     if (minX > maxSizeX-1) {
         minX = maxSizeX-1;
-        status |= setIntegerParam(ADMinX, minX);
+        ADMinX->put(minX);
     }
     if (minY > maxSizeY-1) {
         minY = maxSizeY-1;
-        status |= setIntegerParam(ADMinY, minY);
+        ADMinY->put(minY);
     }
     if (minX+sizeX > maxSizeX) {
         sizeX = maxSizeX-minX;
-        status |= setIntegerParam(ADSizeX, sizeX);
+        ADSizeX->put(sizeX);
     }
     if (minY+sizeY > maxSizeY) {
         sizeY = maxSizeY-minY;
-        status |= setIntegerParam(ADSizeY, sizeY);
+        ADSizeY->put(sizeY);
     }
 
     switch (colorMode) {
@@ -605,85 +571,91 @@ int simDetector::computeImage()
     }
 
     if (resetImage) {
-    /* Free the previous raw buffer */
-        if (pRaw_) pRaw_->release();
         /* Allocate the raw buffer we use to compute images. */
         dims[xDim] = maxSizeX;
         dims[yDim] = maxSizeY;
         if (ndims > 2) dims[colorDim] = 3;
-        pRaw_ = this->pNDArrayPool->alloc(ndims, dims, dataType, 0, NULL);
+
+        pRaw_ = mNDArrayPool->alloc(ndims, dims, dataType);
 
         if (!pRaw_) {
-            asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+            /*asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
                       "%s:%s: error allocating raw buffer\n",
-                      driverName, functionName);
-            return(status);
+                      driverName, functionName);*/
+            return nullImage;
         }
     }
 
     switch (dataType) {
-        case NDInt8:
-            status |= computeArray<epicsInt8>(maxSizeX, maxSizeY);
+        case pvByte:
+            status |= computeArray<int8>(maxSizeX, maxSizeY);
             break;
-        case NDUInt8:
-            status |= computeArray<epicsUInt8>(maxSizeX, maxSizeY);
+        case pvUByte:
+            status |= computeArray<uint8>(maxSizeX, maxSizeY);
             break;
-        case NDInt16:
-            status |= computeArray<epicsInt16>(maxSizeX, maxSizeY);
+        case pvShort:
+            status |= computeArray<int16>(maxSizeX, maxSizeY);
             break;
-        case NDUInt16:
-            status |= computeArray<epicsUInt16>(maxSizeX, maxSizeY);
+        case pvUShort:
+            status |= computeArray<uint16>(maxSizeX, maxSizeY);
             break;
-        case NDInt32:
-            status |= computeArray<epicsInt32>(maxSizeX, maxSizeY);
+        case pvInt:
+            status |= computeArray<int32>(maxSizeX, maxSizeY);
             break;
-        case NDUInt32:
-            status |= computeArray<epicsUInt32>(maxSizeX, maxSizeY);
+        case pvUInt:
+            status |= computeArray<uint32>(maxSizeX, maxSizeY);
             break;
-        case NDFloat32:
-            status |= computeArray<epicsFloat32>(maxSizeX, maxSizeY);
+        case pvFloat:
+            status |= computeArray<float>(maxSizeX, maxSizeY);
             break;
-        case NDFloat64:
-            status |= computeArray<epicsFloat64>(maxSizeX, maxSizeY);
+        case pvDouble:
+            status |= computeArray<double>(maxSizeX, maxSizeY);
+            break;
+        default:
             break;
     }
 
     /* Extract the region of interest with binning.
      * If the entire image is being used (no ROI or binning) that's OK because
      * convertImage detects that case and is very efficient */
-    pRaw_->initDimension(&dimsOut[xDim], sizeX);
-    pRaw_->initDimension(&dimsOut[yDim], sizeY);
-    if (ndims > 2) pRaw_->initDimension(&dimsOut[colorDim], 3);
-    dimsOut[xDim].binning = binX;
-    dimsOut[xDim].offset  = minX;
-    dimsOut[xDim].reverse = reverseX;
-    dimsOut[yDim].binning = binY;
-    dimsOut[yDim].offset  = minY;
-    dimsOut[yDim].reverse = reverseY;
+    NDDimension_t dimsOut[3];
+    NDArray::initDimension(dimsOut[xDim], sizeX, minX, binX, reverseX);
+    NDArray::initDimension(dimsOut[yDim], sizeY, minY, binY, reverseY);
+    if(ndims > 2) NDArray::initDimension(dimsOut[colorDim], 3);
+
+    vector<NDDimension_t> dimsOutVector;
+    for(int i = 0; i < ndims; ++i)
+        dimsOutVector.push_back(dimsOut[i]);
+
+    NDArrayPtr result(mNDArrayPool->convert(pRaw_, dataType, dimsOutVector));
+
     /* We save the most recent image buffer so it can be used in the read() function.
      * Now release it before getting a new version. */
-    if (this->pArrays[0]) this->pArrays[0]->release();
-    status = this->pNDArrayPool->convert(pRaw_,
+    /*if (this->pArrays[0]) this->pArrays[0]->release();
+    status = this->mNDArrayPool->convert(pRaw_,
                                          &this->pArrays[0],
                                          dataType,
                                          dimsOut);
     if (status) {
-        asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
-                    "%s:%s: error allocating buffer in convert()\n",
-                    driverName, functionName);
+        //asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
+        //            "%s:%s: error allocating buffer in convert()\n",
+        //            driverName, functionName);
         return(status);
     }
-    pImage = this->pArrays[0];
-    pImage->getInfo(&arrayInfo);
-    status = asynSuccess;
-    status |= setIntegerParam(NDArraySize,  (int)arrayInfo.totalBytes);
-    status |= setIntegerParam(NDArraySizeX, (int)pImage->dims[xDim].size);
-    status |= setIntegerParam(NDArraySizeY, (int)pImage->dims[yDim].size);
-    status |= setIntegerParam(SimResetImage, 0);
-    if (status) asynPrint(this->pasynUserSelf, ASYN_TRACE_ERROR,
-                    "%s:%s: error setting parameters\n",
-                    driverName, functionName);
-    return(status);
+    //pImage = this->pArrays[0];*/
+
+    //NDArrayInfo_t arrayInfo = pImage->getInfo();
+
+    NDArrayInfo_t arrayInfo = result->getInfo();
+    result->setCompressedSize(arrayInfo.totalBytes);
+    result->setUncompressedSize(arrayInfo.totalBytes);
+
+    /*NDArraySize->put((int)arrayInfo.totalBytes);
+    NDArraySizeX->put((int)pImage->dims[xDim].size);
+    NDArraySizeY->put((int)pImage->dims[yDim].size);*/
+    SimResetImage->put(0);
+
+    return result;
 }
 
 static void simTaskC(void *drvPvt)
@@ -694,53 +666,50 @@ static void simTaskC(void *drvPvt)
 }
 
 /** This thread calls computeImage to compute new image data and does the callbacks to send it to higher layers.
-  * It implements the logic for single, multiple or continuous acquisition. */
+ * It implements the logic for single, multiple or continuous acquisition. */
 void simDetector::simTask()
 {
-    int status = asynSuccess;
+    int status = 0;
     int imageCounter;
     int numImages, numImagesCounter;
     int imageMode;
     int arrayCallbacks;
     int acquire=0;
-    NDArray *pImage;
+    NDArrayPtr pImage;
     double acquireTime, acquirePeriod, delay;
     epicsTimeStamp startTime, endTime;
     double elapsedTime;
-    const char *functionName = "simTask";
+    //const char *functionName = "simTask";
 
     this->lock();
     /* Loop forever */
     while (1) {
-       /* If we are not acquiring then wait for a semaphore that is given when acquisition is started */
+        /* If we are not acquiring then wait for a semaphore that is given when acquisition is started */
         if (!acquire) {
-          /* Release the lock while we wait for an event that says acquire has started, then lock again */
-            asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
-                "%s:%s: waiting for acquire to start\n", driverName, functionName);
+            /* Release the lock while we wait for an event that says acquire has started, then lock again */
+            /*asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+                "%s:%s: waiting for acquire to start\n", driverName, functionName);*/
             this->unlock();
             status = epicsEventWait(startEventId_);
             this->lock();
             acquire = 1;
-            setStringParam(ADStatusMessage, "Acquiring data");
-            setIntegerParam(ADNumImagesCounter, 0);
+            ADStatusMessage->put("Acquiring data");
+            ADNumImagesCounter->put(0);
         }
 
         /* We are acquiring. */
         /* Get the current time */
         epicsTimeGetCurrent(&startTime);
-        getIntegerParam(ADImageMode, &imageMode);
+        imageMode = ADImageMode->get();
 
         /* Get the exposure parameters */
-        getDoubleParam(ADAcquireTime, &acquireTime);
-        getDoubleParam(ADAcquirePeriod, &acquirePeriod);
+        acquireTime = ADAcquireTime->get();
+        acquirePeriod = ADAcquirePeriod->get();
 
-        setIntegerParam(ADStatus, ADStatusAcquire);
+        ADStatus->put(ADStatusAcquire);
 
         /* Open the shutter */
         setShutter(ADShutterOpen);
-
-        /* Call the callbacks to update any changes */
-        callParamCallbacks();
 
         /* Simulate being busy during the exposure time.  Use epicsEventWaitWithTimeout so that
          * manually stopping the acquisition will work */
@@ -751,226 +720,159 @@ void simDetector::simTask()
             this->lock();
         } else {
             status = epicsEventTryWait(stopEventId_);
-        }        
+        }
         if (status == epicsEventWaitOK) {
             acquire = 0;
             if (imageMode == ADImageContinuous) {
-              setIntegerParam(ADStatus, ADStatusIdle);
+                ADStatus->put(ADStatusIdle);
             } else {
-              setIntegerParam(ADStatus, ADStatusAborted);
+                ADStatus->put(ADStatusAborted);
             }
-            callParamCallbacks();
         }
-            
 
         /* Update the image */
-        status = computeImage();
-        if (status) continue;
+        NDArrayPtr pImage(computeImage());
+        if (!pImage) continue;
 
         /* Close the shutter */
         setShutter(ADShutterClosed);
-        
+
         if (!acquire) continue;
 
-        setIntegerParam(ADStatus, ADStatusReadout);
-        /* Call the callbacks to update any changes */
-        callParamCallbacks();
-
-        pImage = this->pArrays[0];
+        ADStatus->put(ADStatusReadout);
 
         /* Get the current parameters */
-        getIntegerParam(NDArrayCounter, &imageCounter);
-        getIntegerParam(ADNumImages, &numImages);
-        getIntegerParam(ADNumImagesCounter, &numImagesCounter);
-        getIntegerParam(NDArrayCallbacks, &arrayCallbacks);
+        imageCounter = NDArrayCounter->get();
+        numImages = ADNumImages->get();
+        numImagesCounter = ADNumImagesCounter->get();
+        arrayCallbacks = NDArrayCallbacks->get();
         imageCounter++;
         numImagesCounter++;
-        setIntegerParam(NDArrayCounter, imageCounter);
-        setIntegerParam(ADNumImagesCounter, numImagesCounter);
+        NDArrayCounter->put(imageCounter);
+        ADNumImagesCounter->put(numImagesCounter);
 
         /* Put the frame number and time stamp into the buffer */
-        pImage->uniqueId = imageCounter;
-        pImage->timeStamp = startTime.secPastEpoch + startTime.nsec / 1.e9;
-        updateTimeStamp(&pImage->epicsTS);
+        pImage->setUniqueId(imageCounter);
+        pImage->setTimeStamp(TimeStamp(startTime.secPastEpoch, startTime.nsec));
+        //pImage->updateEpicsTimeStamp();
 
         /* Get any attributes that have been defined for this driver */
-        this->getAttributes(pImage->pAttributeList);
+        //this->getAttributes(pImage->pAttributeList);
 
         if (arrayCallbacks) {
-          /* Call the NDArray callback */
-          /* Must release the lock here, or we can get into a deadlock, because we can
-           * block on the plugin lock, and the plugin can be calling us */
-          this->unlock();
-          asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
-                    "%s:%s: calling imageData callback\n", driverName, functionName);
-          doCallbacksGenericPointer(pImage, NDArrayData, 0);
-          this->lock();
+            /* Call the NDArray callback */
+            /* Must release the lock here, or we can get into a deadlock, because we can
+             * block on the plugin lock, and the plugin can be calling us */
+            this->unlock();
+            /*asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+                    "%s:%s: calling imageData callback\n", driverName, functionName);*/
+
+            NDArrayData->put(pImage->getArray());
+            //epicsThreadSleep(1);
+            this->lock();
         }
 
         /* See if acquisition is done */
         if ((imageMode == ADImageSingle) ||
-            ((imageMode == ADImageMultiple) &&
-             (numImagesCounter >= numImages))) {
+           ((imageMode == ADImageMultiple) &&
+            (numImagesCounter >= numImages))) {
 
-          /* First do callback on ADStatus. */
-          setStringParam(ADStatusMessage, "Waiting for acquisition");
-          setIntegerParam(ADStatus, ADStatusIdle);
-          callParamCallbacks();
+            /* First do callback on ADStatus. */
+            ADStatusMessage->put("Waiting for acquisition");
+            ADStatus->put(ADStatusIdle);
 
-          acquire = 0;
-          setIntegerParam(ADAcquire, acquire);
-          asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
-                    "%s:%s: acquisition completed\n", driverName, functionName);
+            acquire = 0;
+            ADAcquire->put(acquire);
+            /*asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+                    "%s:%s: acquisition completed\n", driverName, functionName);*/
         }
-
-        /* Call the callbacks to update any changes */
-        callParamCallbacks();
 
         /* If we are acquiring then sleep for the acquire period minus elapsed time. */
         if (acquire) {
-          epicsTimeGetCurrent(&endTime);
-          elapsedTime = epicsTimeDiffInSeconds(&endTime, &startTime);
-          delay = acquirePeriod - elapsedTime;
-          asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
+            epicsTimeGetCurrent(&endTime);
+            elapsedTime = epicsTimeDiffInSeconds(&endTime, &startTime);
+            delay = acquirePeriod - elapsedTime;
+            /*asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW,
                     "%s:%s: delay=%f\n",
-                    driverName, functionName, delay);
-          if (delay >= 0.0) {
-            /* We set the status to waiting to indicate we are in the period delay */
-            setIntegerParam(ADStatus, ADStatusWaiting);
-            callParamCallbacks();
-            this->unlock();
-            status = epicsEventWaitWithTimeout(stopEventId_, delay);
-            this->lock();
-            if (status == epicsEventWaitOK) {
-              acquire = 0;
-              if (imageMode == ADImageContinuous) {
-                setIntegerParam(ADStatus, ADStatusIdle);
-              } else {
-                setIntegerParam(ADStatus, ADStatusAborted);
-              }
-              callParamCallbacks();
+                    driverName, functionName, delay);*/
+            if (delay >= 0.0) {
+                /* We set the status to waiting to indicate we are in the period delay */
+                ADStatus->put(ADStatusWaiting);
+                this->unlock();
+                status = epicsEventWaitWithTimeout(stopEventId_, delay);
+                this->lock();
+                if (status == epicsEventWaitOK) {
+                    acquire = 0;
+                    if (imageMode == ADImageContinuous) {
+                        ADStatus->put(ADStatusIdle);
+                    } else {
+                        ADStatus->put(ADStatusAborted);
+                    }
+                }
             }
-          }
         }
     }
 }
-
-
-/** Called when asyn clients call pasynInt32->write().
-  * This function performs actions for some parameters, including ADAcquire, ADColorMode, etc.
-  * For all parameters it sets the value in the parameter library and calls any registered callbacks..
-  * \param[in] pasynUser pasynUser structure that encodes the reason and address.
-  * \param[in] value Value to write. */
-asynStatus simDetector::writeInt32(asynUser *pasynUser, epicsInt32 value)
+/** Controls the shutter */
+void simDetector::setShutter(int open)
 {
-    int function = pasynUser->reason;
-    int adstatus;
-    int acquiring;
-    int imageMode;
-    asynStatus status = asynSuccess;
-
-    /* Ensure that ADStatus is set correctly before we set ADAcquire.*/
-    getIntegerParam(ADStatus, &adstatus);
-    getIntegerParam(ADAcquire, &acquiring);
-    getIntegerParam(ADImageMode, &imageMode);
-    if (function == ADAcquire) {
-      if (value && !acquiring) {
-        setStringParam(ADStatusMessage, "Acquiring data");
-      }
-      if (!value && acquiring) {
-        setStringParam(ADStatusMessage, "Acquisition stopped");
-        if (imageMode == ADImageContinuous) {
-          setIntegerParam(ADStatus, ADStatusIdle);
-        } else {
-          setIntegerParam(ADStatus, ADStatusAborted);
-        }
-        setIntegerParam(ADStatus, ADStatusAcquire); 
-      }
-    }
-    callParamCallbacks();
- 
-    /* Set the parameter and readback in the parameter library.  This may be overwritten when we read back the
-     * status at the end, but that's OK */
-    status = setIntegerParam(function, value);
-
-    /* For a real detector this is where the parameter is sent to the hardware */
-    if (function == ADAcquire) {
-        if (value && !acquiring) {
-            /* Send an event to wake up the simulation task.
-             * It won't actually start generating new images until we release the lock below */
-            epicsEventSignal(startEventId_); 
-        }
-        if (!value && acquiring) {
-            /* This was a command to stop acquisition */
-            /* Send the stop event */
-            epicsEventSignal(stopEventId_); 
-        }
-    } else if ((function == NDDataType) || 
-               (function == NDColorMode) ||
-               (function == SimMode)) {
-        status = setIntegerParam(SimResetImage, 1);
+    if (ADShutterMode->get() == ADShutterModeDetector) {
+        /* Simulate a shutter by just changing the status readback */
+        ADShutterStatus->put(open);
     } else {
-        /* If this parameter belongs to a base class call its method */
-        if (function < FIRST_SIM_DETECTOR_PARAM) status = ADDriver::writeInt32(pasynUser, value);
+        /* For no shutter or EPICS shutter call the base class method */
+        ADDriver::setShutter(open);
+    }
+}
+
+void simDetector::process (PVRecord const * record)
+{
+    printf("simDetector process(%s)\n", record->getRecordName().c_str());
+
+    // TODO: recheck if the logic is compatible with original
+    if (record == ADAcquire.get()) {
+        int value = ADAcquire->get();
+
+        if (value && !acquiring_) {
+            ADStatusMessage->put("Acquiring data");
+            acquiring_ = true;
+            epicsEventSignal(startEventId_);
+        }
+        if (!value && acquiring_) {
+            ADStatusMessage->put("Acquisition stopped");
+            if (ADImageMode->get() == ADImageContinuous) {
+                ADStatus->put(ADStatusIdle);
+            } else {
+                ADStatus->put(ADStatusAborted);
+            }
+            ADStatus->put(ADStatusAcquire);
+            epicsEventSignal(stopEventId_);
+        }
+    } else if ( record == NDDataType.get() ||
+                record == NDColorMode.get() ||
+                record == SimMode.get() ||
+                record == ADAcquireTime.get() ||
+                record == ADGain.get() ||
+                record == SimGainX.get() ||
+                record == SimGainY.get() ||
+                record == SimGainRed.get() ||
+                record == SimGainGreen.get() ||
+                record == SimGainBlue.get()) {
+        SimResetImage->put(1);
+    } else {
+        ADDriver::process(record);
     }
 
-    /* Do callbacks so higher layers see any changes */
-    callParamCallbacks();
-
-    if (status)
+    /*if (status)
         asynPrint(pasynUser, ASYN_TRACE_ERROR,
               "%s:writeInt32 error, status=%d function=%d, value=%d\n",
               driverName, status, function, value);
     else
         asynPrint(pasynUser, ASYN_TRACEIO_DRIVER,
               "%s:writeInt32: function=%d, value=%d\n",
-              driverName, function, value);
-    return status;
+              driverName, function, value);*/
 }
 
-
-/** Called when asyn clients call pasynFloat64->write().
-  * This function performs actions for some parameters, including ADAcquireTime, ADGain, etc.
-  * For all parameters it sets the value in the parameter library and calls any registered callbacks..
-  * \param[in] pasynUser pasynUser structure that encodes the reason and address.
-  * \param[in] value Value to write. */
-asynStatus simDetector::writeFloat64(asynUser *pasynUser, epicsFloat64 value)
-{
-    int function = pasynUser->reason;
-    asynStatus status = asynSuccess;
-
-    /* Set the parameter and readback in the parameter library.  This may be overwritten when we read back the
-     * status at the end, but that's OK */
-    status = setDoubleParam(function, value);
-
-    /* Changing any of the following parameters requires recomputing the base image */
-    if ((function == ADAcquireTime) ||
-        (function == ADGain) ||
-        (function == SimGainX) ||
-        (function == SimGainY) ||
-        (function == SimGainRed) ||
-        (function == SimGainGreen) ||
-        (function == SimGainBlue)) {
-            status = setIntegerParam(SimResetImage, 1);
-    } else {
-        /* If this parameter belongs to a base class call its method */
-        if (function < FIRST_SIM_DETECTOR_PARAM) status = ADDriver::writeFloat64(pasynUser, value);
-    }
-
-    /* Do callbacks so higher layers see any changes */
-    callParamCallbacks();
-    if (status)
-        asynPrint(pasynUser, ASYN_TRACE_ERROR,
-              "%s:writeFloat64 error, status=%d function=%d, value=%f\n",
-              driverName, status, function, value);
-    else
-        asynPrint(pasynUser, ASYN_TRACEIO_DRIVER,
-              "%s:writeFloat64: function=%d, value=%f\n",
-              driverName, function, value);
-    return status;
-}
-
-
 /** Report status of the driver.
   * Prints details about the driver if details>0.
   * It then calls the ADDriver::report() method.
@@ -979,15 +881,10 @@ asynStatus simDetector::writeFloat64(asynUser *pasynUser, epicsFloat64 value)
   */
 void simDetector::report(FILE *fp, int details)
 {
-
-    fprintf(fp, "Simulation detector %s\n", this->portName);
+    fprintf(fp, "Simulation detector\n");
     if (details > 0) {
-        int nx, ny, dataType;
-        getIntegerParam(ADSizeX, &nx);
-        getIntegerParam(ADSizeY, &ny);
-        getIntegerParam(NDDataType, &dataType);
-        fprintf(fp, "  NX, NY:            %d  %d\n", nx, ny);
-        fprintf(fp, "  Data type:         %d\n", dataType);
+        fprintf(fp, "  NX, NY:            %d  %d\n", ADSizeX->get(), ADSizeY->get());
+        fprintf(fp, "  Data type:         %d\n", NDDataType->get());
     }
     /* Invoke the base class method */
     ADDriver::report(fp, details);
@@ -1007,163 +904,117 @@ void simDetector::report(FILE *fp, int details)
   * \param[in] priority The thread priority for the asyn port driver thread if ASYN_CANBLOCK is set in asynFlags.
   * \param[in] stackSize The stack size for the asyn port driver thread if ASYN_CANBLOCK is set in asynFlags.
   */
-simDetector::simDetector(const char *portName, int maxSizeX, int maxSizeY, NDDataType_t dataType,
-                         int maxBuffers, size_t maxMemory, int priority, int stackSize)
+simDetector::simDetector(string const & prefix, int maxSizeX, int maxSizeY,
+                         ScalarType dataType, int maxBuffers, size_t maxMemory)
 
-    : ADDriver(portName, 1, NUM_SIM_DETECTOR_PARAMS, maxBuffers, maxMemory,
-               0, 0, /* No interfaces beyond those set in ADDriver.cpp */
-               0, 1, /* ASYN_CANBLOCK=0, ASYN_MULTIDEVICE=0, autoConnect=1 */
-               priority, stackSize),
-      pRaw_(NULL), xSine1_(0), xSine2_(0), ySine1_(0), ySine2_(0)
+    : ADDriver(prefix, maxBuffers, maxMemory),
+      pRaw_(), acquiring_(false), xSine1_(0), xSine2_(0), ySine1_(0), ySine2_(0),
+      startEventId_(epicsEventCreate(epicsEventEmpty)),
+      stopEventId_(epicsEventCreate(epicsEventEmpty))
 
 {
-    int status = asynSuccess;
-    const char *functionName = "simDetector";
+    //int status = asynSuccess;
+    //const char *functionName = "simDetector";
 
-    /* Create the epicsEvents for signaling to the simulate task when acquisition starts and stops */
-    startEventId_ = epicsEventCreate(epicsEventEmpty);
-    if (!startEventId_) {
-        printf("%s:%s epicsEventCreate failure for start event\n",
-            driverName, functionName);
-        return;
-    }
-    stopEventId_ = epicsEventCreate(epicsEventEmpty);
-    if (!stopEventId_) {
-        printf("%s:%s epicsEventCreate failure for stop event\n",
-            driverName, functionName);
-        return;
-    }
-
-    createParam(SimGainXString,               asynParamFloat64, &SimGainX);
-    createParam(SimGainYString,               asynParamFloat64, &SimGainY);
-    createParam(SimGainRedString,             asynParamFloat64, &SimGainRed);
-    createParam(SimGainGreenString,           asynParamFloat64, &SimGainGreen);
-    createParam(SimGainBlueString,            asynParamFloat64, &SimGainBlue);
-    createParam(SimNoiseString,               asynParamInt32,   &SimNoise);
-    createParam(SimResetImageString,          asynParamInt32,   &SimResetImage);
-    createParam(SimModeString,                asynParamInt32,   &SimMode);
-    createParam(SimPeakNumXString,            asynParamInt32,   &SimPeakNumX);
-    createParam(SimPeakNumYString,            asynParamInt32,   &SimPeakNumY);
-    createParam(SimPeakStepXString,           asynParamInt32,   &SimPeakStepX);
-    createParam(SimPeakStepYString,           asynParamInt32,   &SimPeakStepY);
-    createParam(SimPeakStartXString,          asynParamInt32,   &SimPeakStartX);
-    createParam(SimPeakStartYString,          asynParamInt32,   &SimPeakStartY);
-    createParam(SimPeakWidthXString,          asynParamInt32,   &SimPeakWidthX);
-    createParam(SimPeakWidthYString,          asynParamInt32,   &SimPeakWidthY);
-    createParam(SimPeakHeightVariationString, asynParamInt32,   &SimPeakHeightVariation);
-    createParam(SimSineOffsetString,          asynParamFloat64, &SimSineOffset);
-    createParam(SimSineNoiseString,           asynParamFloat64, &SimSineNoise);
-    createParam(SimXSineOperationString,      asynParamInt32,   &SimXSineOperation);
-    createParam(SimYSineOperationString,      asynParamInt32,   &SimYSineOperation);
-    createParam(SimXSine1AmplitudeString,     asynParamFloat64, &SimXSine1Amplitude);
-    createParam(SimXSine1FrequencyString,     asynParamFloat64, &SimXSine1Frequency);
-    createParam(SimXSine1PhaseString,         asynParamFloat64, &SimXSine1Phase);
-    createParam(SimXSine2AmplitudeString,     asynParamFloat64, &SimXSine2Amplitude);
-    createParam(SimXSine2FrequencyString,     asynParamFloat64, &SimXSine2Frequency);
-    createParam(SimXSine2PhaseString,         asynParamFloat64, &SimXSine2Phase);
-    createParam(SimYSine1AmplitudeString,     asynParamFloat64, &SimYSine1Amplitude);
-    createParam(SimYSine1FrequencyString,     asynParamFloat64, &SimYSine1Frequency);
-    createParam(SimYSine1PhaseString,         asynParamFloat64, &SimYSine1Phase);
-    createParam(SimYSine2AmplitudeString,     asynParamFloat64, &SimYSine2Amplitude);
-    createParam(SimYSine2FrequencyString,     asynParamFloat64, &SimYSine2Frequency);
-    createParam(SimYSine2PhaseString,         asynParamFloat64, &SimYSine2Phase);
+    SimGainX                = createParam<double>(SimGainXString, 1.0);
+    SimGainY                = createParam<double>(SimGainYString, 1.0);
+    SimGainRed              = createParam<double>(SimGainRedString, 1.0);
+    SimGainGreen            = createParam<double>(SimGainGreenString, 1.0);
+    SimGainBlue             = createParam<double>(SimGainBlueString, 1.0);
+    SimNoise                = createParam<int32>(SimNoiseString, 3);
+    SimResetImage           = createParam<int32>(SimResetImageString, 1);
+    SimMode                 = createParam<int32>(SimModeString, 0);
+    SimPeakStartX           = createParam<int32>(SimPeakStartXString, 1);
+    SimPeakStartY           = createParam<int32>(SimPeakStartYString, 1);
+    SimPeakWidthX           = createParam<int32>(SimPeakWidthXString, 10);
+    SimPeakWidthY           = createParam<int32>(SimPeakWidthYString, 20);
+    SimPeakNumX             = createParam<int32>(SimPeakNumXString, 1);
+    SimPeakNumY             = createParam<int32>(SimPeakNumYString, 1);
+    SimPeakStepX            = createParam<int32>(SimPeakStepXString, 1);
+    SimPeakStepY            = createParam<int32>(SimPeakStepYString, 1);
+    SimPeakHeightVariation  = createParam<int32>(SimPeakHeightVariationString, 3);
+    SimSineOffset           = createParam<double>(SimSineOffsetString);
+    SimSineNoise            = createParam<double>(SimSineNoiseString);
+    SimXSineOperation       = createParam<int32>(SimXSineOperationString);
+    SimXSine1Amplitude      = createParam<double>(SimXSine1AmplitudeString);
+    SimXSine1Frequency      = createParam<double>(SimXSine1FrequencyString);
+    SimXSine1Phase          = createParam<double>(SimXSine1PhaseString);
+    SimXSine2Amplitude      = createParam<double>(SimXSine2AmplitudeString);
+    SimXSine2Frequency      = createParam<double>(SimXSine2FrequencyString);
+    SimXSine2Phase          = createParam<double>(SimXSine2PhaseString);
+    SimYSineOperation       = createParam<int32>(SimYSineOperationString);
+    SimYSine1Amplitude      = createParam<double>(SimYSine1AmplitudeString);
+    SimYSine1Frequency      = createParam<double>(SimYSine1FrequencyString);
+    SimYSine1Phase          = createParam<double>(SimYSine1PhaseString);
+    SimYSine2Amplitude      = createParam<double>(SimYSine2AmplitudeString);
+    SimYSine2Frequency      = createParam<double>(SimYSine2FrequencyString);
+    SimYSine2Phase          = createParam<double>(SimYSine2PhaseString);
 
     /* Set some default values for parameters */
-    status =  setStringParam (ADManufacturer, "Simulated detector");
-    status |= setStringParam (ADModel, "Basic simulator");
-    status |= setIntegerParam(ADMaxSizeX, maxSizeX);
-    status |= setIntegerParam(ADMaxSizeY, maxSizeY);
-    status |= setIntegerParam(ADMinX, 0);
-    status |= setIntegerParam(ADMinY, 0);
-    status |= setIntegerParam(ADBinX, 1);
-    status |= setIntegerParam(ADBinY, 1);
-    status |= setIntegerParam(ADReverseX, 0);
-    status |= setIntegerParam(ADReverseY, 0);
-    status |= setIntegerParam(ADSizeX, maxSizeX);
-    status |= setIntegerParam(ADSizeY, maxSizeY);
-    status |= setIntegerParam(NDArraySizeX, maxSizeX);
-    status |= setIntegerParam(NDArraySizeY, maxSizeY);
-    status |= setIntegerParam(NDArraySize, 0);
-    status |= setIntegerParam(NDDataType, dataType);
-    status |= setIntegerParam(ADImageMode, ADImageContinuous);
-    status |= setDoubleParam (ADAcquireTime, .001);
-    status |= setDoubleParam (ADAcquirePeriod, .005);
-    status |= setIntegerParam(ADNumImages, 100);
-    status |= setIntegerParam(SimNoise, 3);
-    status |= setIntegerParam(SimResetImage, 1);
-    status |= setDoubleParam (SimGainX, 1);
-    status |= setDoubleParam (SimGainY, 1);
-    status |= setDoubleParam (SimGainRed, 1);
-    status |= setDoubleParam (SimGainGreen, 1);
-    status |= setDoubleParam (SimGainBlue, 1);
-    status |= setIntegerParam(SimMode, 0);
-    status |= setIntegerParam(SimPeakStartX, 1);
-    status |= setIntegerParam(SimPeakStartY, 1);
-    status |= setIntegerParam(SimPeakWidthX, 10);
-    status |= setIntegerParam(SimPeakWidthY, 20);
-    status |= setIntegerParam(SimPeakNumX, 1);
-    status |= setIntegerParam(SimPeakNumY, 1);
-    status |= setIntegerParam(SimPeakStepX, 1);
-    status |= setIntegerParam(SimPeakStepY, 1);
-    status |= setIntegerParam(SimPeakHeightVariation, 3);
+    ADManufacturer->put("Simulated detector");
+    ADModel->put("Basic simulator");
+    ADMaxSizeX->put(maxSizeX);
+    ADMaxSizeY->put(maxSizeY);
+    ADMinX->put(0);
+    ADMinY->put(0);
+    ADBinX->put(1);
+    ADBinY->put(1);
+    ADReverseX->put(false);
+    ADReverseY->put(false);
+    ADSizeX->put(maxSizeX);
+    ADSizeY->put(maxSizeY);
+    NDArraySizeX->put(maxSizeX);
+    NDArraySizeY->put(maxSizeY);
+    NDArraySize->put(0);
+    NDDataType->put(static_cast<int32>(dataType));
+    ADImageMode->put(ADImageContinuous);
+    ADAcquireTime->put(.001);
+    ADAcquirePeriod->put(.005);
+    ADNumImages->put(100);
 
-    if (status) {
-        printf("%s: unable to set camera parameters\n", functionName);
-        return;
-    }
-
-    /* Create the thread that updates the images */
-    status = (epicsThreadCreate("SimDetTask",
+    int status = (epicsThreadCreate("SimDetTask",
                                 epicsThreadPriorityMedium,
                                 epicsThreadGetStackSize(epicsThreadStackMedium),
                                 (EPICSTHREADFUNC)simTaskC,
                                 this) == NULL);
     if (status) {
-        printf("%s:%s epicsThreadCreate failure for image task\n",
-            driverName, functionName);
+        printf("simDetector:simDetector epicsThreadCreate failure for image task\n");
         return;
     }
 }
 
 /** Configuration command, called directly or from iocsh */
-extern "C" int simDetectorConfig(const char *portName, int maxSizeX, int maxSizeY, int dataType,
-                                 int maxBuffers, int maxMemory, int priority, int stackSize)
+extern "C" int simDetectorConfig(const char *prefix, int maxSizeX, int maxSizeY, int dataType,
+                                 int maxBuffers, int maxMemory)
 {
-    new simDetector(portName, maxSizeX, maxSizeY, (NDDataType_t)dataType,
+    new simDetector(prefix, maxSizeX, maxSizeY, static_cast<ScalarType>(dataType),
                     (maxBuffers < 0) ? 0 : maxBuffers,
-                    (maxMemory < 0) ? 0 : maxMemory, 
-                    priority, stackSize);
-    return(asynSuccess);
+                    (maxMemory < 0) ? 0 : maxMemory);
+    return 0;
 }
 
 /** Code for iocsh registration */
-static const iocshArg simDetectorConfigArg0 = {"Port name", iocshArgString};
+static const iocshArg simDetectorConfigArg0 = {"Prefix", iocshArgString};
 static const iocshArg simDetectorConfigArg1 = {"Max X size", iocshArgInt};
 static const iocshArg simDetectorConfigArg2 = {"Max Y size", iocshArgInt};
 static const iocshArg simDetectorConfigArg3 = {"Data type", iocshArgInt};
 static const iocshArg simDetectorConfigArg4 = {"maxBuffers", iocshArgInt};
 static const iocshArg simDetectorConfigArg5 = {"maxMemory", iocshArgInt};
-static const iocshArg simDetectorConfigArg6 = {"priority", iocshArgInt};
-static const iocshArg simDetectorConfigArg7 = {"stackSize", iocshArgInt};
 static const iocshArg * const simDetectorConfigArgs[] =  {&simDetectorConfigArg0,
                                                           &simDetectorConfigArg1,
                                                           &simDetectorConfigArg2,
                                                           &simDetectorConfigArg3,
                                                           &simDetectorConfigArg4,
-                                                          &simDetectorConfigArg5,
-                                                          &simDetectorConfigArg6,
-                                                          &simDetectorConfigArg7};
-static const iocshFuncDef configsimDetector = {"simDetectorConfig", 8, simDetectorConfigArgs};
+                                                          &simDetectorConfigArg5};
+static const iocshFuncDef configsimDetector = {"simDetectorConfig", 6, simDetectorConfigArgs};
 static void configsimDetectorCallFunc(const iocshArgBuf *args)
 {
     simDetectorConfig(args[0].sval, args[1].ival, args[2].ival, args[3].ival,
-                      args[4].ival, args[5].ival, args[6].ival, args[7].ival);
+                      args[4].ival, args[5].ival);
 }
-
 
 static void simDetectorRegister(void)
 {
-
     iocshRegister(&configsimDetector, configsimDetectorCallFunc);
 }
 
