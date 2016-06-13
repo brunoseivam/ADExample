@@ -19,85 +19,40 @@
 #include <pv/serverContext.h>
 #include <pv/pvDatabase.h>
 
+#include <pv/pvPortClient.h>
+#include <pv/scalarClient.h>
+
 using namespace std;
 using namespace epics::pvData;
 using namespace epics::pvAccess;
-using namespace epics::pvaClient;
-using namespace epics::pvDatabase;
+using namespace epics::pvPortClient;
 
 int main(int argc, char **argv)
 {
-    cout << "Begin" << endl;
-
     const string provider("local");
     const string simPrefix("13SIM1:cam1:");
     const string roiPrefix("13SIM1:ROI1:");
 
     simDetector simD(simPrefix, 1024, 1024, pvByte, 0, 0);
-    NDPluginROI roi(roiPrefix, 20, false, "local", simPrefix+string("ArrayData"), 0, 0, 0);
+    NDPluginROI roi(roiPrefix, 20, false, provider, simPrefix+string(NDArrayDataString), 0, 0, 0);
 
-    PvaClientPtr client = PvaClient::get(provider);
+    IntParamClientPtr acquire(IntParamClient::create(provider, simPrefix + string(ADAcquireString)));
+    DoubleParamClientPtr gain(DoubleParamClient::create(provider, simPrefix + string(ADGainString)));
+    IntParamClientPtr arrayCallbacks(IntParamClient::create(provider, simPrefix + string(NDArrayCallbacksString)));
 
-    string acquireString(simPrefix + string(ADAcquireString));
-    PvaClientChannelPtr acquire = client->channel(acquireString, provider, 1.0);
-    PvaClientPutPtr acquirePut = acquire->put();
-    PvaClientPutDataPtr acquirePutData = acquirePut->getData();
+    IntParamClientPtr roiEnableCallbacks(IntParamClient::create(provider, roiPrefix + string(NDPluginDriverEnableCallbacksString)));
+    IntParamClientPtr roiDataType(IntParamClient::create(provider, roiPrefix + string(NDPluginROIDataTypeString)));
+    BooleanParamClientPtr roiBlockingCallbacks(BooleanParamClient::create(provider, roiPrefix + string(NDPluginDriverBlockingCallbacksString)));
 
-    string gainString(simPrefix + string(ADGainString));
-    PvaClientChannelPtr gain = client->channel(gainString, provider, 1.0);
-    PvaClientPutPtr gainPut = gain->put();
-    PvaClientPutDataPtr gainPutData = gainPut->getData();
+    roiDataType->put(1);
+    roiEnableCallbacks->put(1);
+    roiBlockingCallbacks->put(true);
 
-    string callbacksString(simPrefix + string(NDArrayCallbacksString));
-    PvaClientChannelPtr arrayCallbacks = client->channel(callbacksString, provider, 1.0);
-    PvaClientPutPtr arrayCallbacksPut = arrayCallbacks->put();
-    PvaClientPutDataPtr arrayCallbacksPutData = arrayCallbacksPut->getData();
-
-    string roiCallbacksString(roiPrefix + string(NDPluginDriverEnableCallbacksString));
-    PvaClientChannelPtr roiEnableCallbacks = client->channel(roiCallbacksString, provider, 1.0);
-    PvaClientPutPtr roiEnableCallbacksPut = roiEnableCallbacks->put();
-    PvaClientPutDataPtr roiEnableCallbacksPutData = roiEnableCallbacksPut->getData();
-
-    string roiDataTypeString(roiPrefix + string(NDPluginROIDataTypeString));
-    PvaClientChannelPtr roiDataType = client->channel(roiDataTypeString, provider, 1.0);
-    PvaClientPutPtr roiDataTypePut = roiDataType->put();
-    PvaClientPutDataPtr roiDataTypePutData = roiDataTypePut->getData();
-
-    string roiDim0MinString(roiPrefix + string(NDPluginROIDim0MinString));
-    PvaClientChannelPtr roiDim0Min = client->channel(roiDim0MinString, provider, 1.0);
-    PvaClientPutPtr roiDim0MinPut = roiDim0Min->put();
-    PvaClientPutDataPtr roiDim0MinPutData = roiDim0MinPut->getData();
-
-    string roiBlockingCallbacksString(roiPrefix + string(NDPluginDriverBlockingCallbacksString));
-    PvaClientChannelPtr roiBlockingCallbacks = client->channel(roiBlockingCallbacksString, provider, 1.0);
-    PvaClientPutPtr roiBlockingCallbacksPut = roiBlockingCallbacks->put();
-    PvaClientPutDataPtr roiBlockingCallbacksPutData = roiBlockingCallbacksPut->getData();
-
-    //roiDim0MinPutData->putDouble(499);
-    //roiDim0MinPut->put();
-
-    roiDataTypePutData->putDouble(1.0);
-    roiDataTypePut->put();
-
-    roiEnableCallbacksPutData->putDouble(1.0);
-    roiEnableCallbacksPut->put();
-
-    roiBlockingCallbacksPutData->putString("true");
-    roiBlockingCallbacksPut->put();
-
-    gainPutData->putDouble(1.0);
-    gainPut->put();
-
-    arrayCallbacksPutData->putDouble(1.0);
-    arrayCallbacksPut->put();
-
-    acquirePutData->putDouble(1);
-    acquirePut->put();
+    gain->put(1.0);
+    arrayCallbacks->put(1);
+    acquire->put(1);
 
     startPVAServer("local", 0, false, true);
 
-    for(;;);
-    cout << "End" << endl;
-
-  return 0;
+    return 0;
 }

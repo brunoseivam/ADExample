@@ -15,7 +15,7 @@ PROD_IOC_WIN32  += simDetectorNoIOCApp
 PROD_IOC_Darwin  += simDetectorNoIOCApp
 PROD_SRCS += simDetectorNoIOC.cpp
 
-PROD_LIBS += simDetector pvaClient
+PROD_LIBS += simDetector pvaClient pvPortClient
 
 ifeq ($(EPICS_LIBCOM_ONLY),YES)
   PROD_LIBS += ADBase
